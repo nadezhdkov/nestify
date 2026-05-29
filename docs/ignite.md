@@ -1,8 +1,8 @@
-# Nestifypy Boot 🐍
+# Nestifypy Ignite 🐍
 
 > A Spring Boot-inspired framework for Python — decorator-driven, async-first, enterprise-ready.
 
-[![PyPI version](https://img.shields.io/pypi/v/nestifypy-boot.svg)](https://pypi.org/project/nestifypy-boot/)
+[![PyPI version](https://img.shields.io/pypi/v/nestifypy-ignite.svg)](https://pypi.org/project/nestifypy-ignite/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../../files(5)/LICENSE)
 
@@ -28,16 +28,16 @@
 
 ```bash
 # Core only
-pip install nestifypy-boot
+pip install nestifypy-ignite
 
 # With web server
-pip install "nestifypy-boot[web]"
+pip install "nestifypy-ignite[web]"
 
 # With security
-pip install "nestifypy-boot[security]"
+pip install "nestifypy-ignite[security]"
 
 # Everything
-pip install "nestifypy-boot[all]"
+pip install "nestifypy-ignite[all]"
 ```
 
 ---
@@ -45,9 +45,9 @@ pip install "nestifypy-boot[all]"
 ## Quick Start
 
 ```python
-from nestifypy_boot import Application
-from nestifypy_boot.decorators import Service, Controller, PostConstruct
-from nestifypy_boot.web.rest import Get, Post
+from nestifypy.ignite import Application
+from nestifypy.ignite.decorators import Service, Controller, PostConstruct
+from nestifypy.ignite.web.rest import Get, Post
 
 @Service
 class UserService:
@@ -132,7 +132,7 @@ class NotificationService:
 ## Configuration Beans
 
 ```python
-from nestifypy_boot.decorators import Configuration, Bean
+from nestifypy.ignite.decorators import Configuration, Bean
 
 @Configuration
 class AppConfig:
@@ -149,7 +149,7 @@ class AppConfig:
 
 ```python
 from dataclasses import dataclass
-from nestifypy_boot.decorators import Service, EventListener
+from nestifypy.ignite.decorators import Service, EventListener
 
 @dataclass
 class UserCreatedEvent:
@@ -176,7 +176,7 @@ class AuditService:
 ## Scheduled Tasks
 
 ```python
-from nestifypy_boot.decorators import Service, Scheduled
+from nestifypy.ignite.decorators import Service, Scheduled
 
 @Service
 class CleanupService:
@@ -191,8 +191,8 @@ class CleanupService:
 ## Security
 
 ```python
-from nestifypy_boot.security import JwtService, Guard, GuardBase, RequiresRoles
-from nestifypy_boot.web.rest import Get
+from nestifypy.ignite.security import JwtService, Guard, GuardBase, RequiresRoles
+from nestifypy.ignite.web.rest import Get
 
 class AdminGuard(GuardBase):
     async def can_activate(self, request=None) -> bool:
@@ -214,7 +214,7 @@ class AdminController:
 ## Testing
 
 ```python
-from nestifypy_boot.testing import TestContainer, mock_bean
+from nestifypy.ignite.testing import TestContainer, mock_bean
 
 def test_user_controller():
     mock_service = mock_bean(UserService, get_users=lambda: ["TestUser"])
