@@ -45,6 +45,9 @@ class AudioSystem:
         self._music_volume: float = 1.0
         self._sfx_volume:   float = 1.0
         self._paused:       bool  = False
+        # Keeps strong references to pitched Sound objects until they finish
+        # playing, preventing premature garbage collection.
+        self._pitched_sounds: list = []
 
     # ── Music (streamed) ─────────────────────
 
@@ -131,7 +134,9 @@ class AudioSystem:
         vol = volume if volume is not None else self._sfx_volume
 
         if pitch_variance > 0.0:
-            # Crude pitch shift: adjust speed via a temporary Sound copy
+            # Crude pitch shift: adjust speed via a temporary Sound copy.
+            # The pitched object is stored in self._pitched_sounds so the GC
+            # cannot collect it while the audio is still playing.
             factor = 1.0 + random.uniform(-pitch_variance, pitch_variance)
             try:
                 arr = pygame.sndarray.array(snd)
@@ -140,7 +145,14 @@ class AudioSystem:
                 indices = indices[indices < len(arr)]
                 pitched = pygame.sndarray.make_sound(arr[indices])
                 pitched.set_volume(vol)
-                return pitched.play(loops=loops)
+                channel = pitched.play(loops=loops)
+                # Purge finished sounds, then track the new one
+                self._pitched_sounds = [
+                    s for s in self._pitched_sounds
+                    if pygame.mixer.find_channel() is not None and s.get_num_channels() > 0
+                ]
+                self._pitched_sounds.append(pitched)
+                return channel
             except Exception:
                 pass  # numpy not available — fall through
 

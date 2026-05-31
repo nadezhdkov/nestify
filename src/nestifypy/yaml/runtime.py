@@ -76,7 +76,7 @@ class YamlRuntime:
         # 5. Incremental Scan
         self.scanner.scan(self.project_root)
         
-        # 6. Initialize watcher automatically
+        # 6. Initialize watcher automatically (autonomous hot-reload)
         self.watcher.watch(True, [self.project_root])
         
         self.is_initialized = True

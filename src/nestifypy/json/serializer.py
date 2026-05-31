@@ -183,7 +183,7 @@ class JsonSerializer:
             raise JsonSerializationError(f"Cannot serialise object to JSON: {exc}") from exc
 
         try:
-            from nestifypy.core import Logger
+            from nestifypy.slogger import Logger
             Logger.info(f"Saved JSON → {p}")
         except Exception:
             pass
@@ -227,7 +227,7 @@ class JsonSerializer:
             raise
 
         try:
-            from nestifypy.core import Logger
+            from nestifypy.slogger import Logger
             Logger.info(f"Safe-saved JSON → {p}")
         except Exception:
             pass

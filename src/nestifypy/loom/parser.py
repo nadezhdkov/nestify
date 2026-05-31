@@ -12,8 +12,10 @@ Grammar (simplified):
     scope        ::= DIRECTIVE LBRACE property* RBRACE
                    | DIRECTIVE LBRACE (property COMMA)+ RBRACE   (inline)
     property     ::= STRING COLON value NEWLINE?
-    value        ::= STRING | INTEGER | FLOAT | BOOL | NULL | list_val
+    value        ::= STRING | INTEGER | FLOAT | BOOL | NULL | list_val | map_val | indented_block
     list_val     ::= LBRACKET (value (COMMA value)*)? RBRACKET
+    map_val      ::= LBRACE (property (COMMA property)*)? RBRACE
+    indented_block ::= NEWLINE INDENT property+ DEDENT   (YAML-style, column-based)
     kv_arg       ::= STRING EQUALS STRING   (in directive arguments)
 """
 
@@ -25,6 +27,7 @@ from nestifypy.loom.ast_nodes import (
     ImportNode,
     LiteralNode,
     ListNode,
+    MapNode,
     ModuleNode,
     PropertyNode,
     ScopeNode,
@@ -52,6 +55,28 @@ class Parser:
         self._lines = source.splitlines()
         self._tokens = tokenize(source, filename)
         self._pos = 0
+        # Detect mixed tabs/spaces in source
+        self._check_indentation_consistency()
+
+    # ── indentation consistency check ────────────────────────────────────────
+
+    def _check_indentation_consistency(self) -> None:
+        """Verify no line mixes tabs and spaces in its leading whitespace."""
+        for i, line in enumerate(self._lines):
+            if not line.strip():
+                continue
+            leading = line[: len(line) - len(line.lstrip())]
+            if "\t" in leading and " " in leading:
+                raise LoomSyntaxError(
+                    "Mixed tabs and spaces in indentation",
+                    filename=self._filename,
+                    line=i + 1,
+                    column=1,
+                    source_lines=self._lines,
+                    got="mixed tabs and spaces",
+                    expected="consistent indentation (spaces only or tabs only)",
+                    hint="Use spaces or tabs consistently — do not mix them.",
+                )
 
     # ── token navigation ─────────────────────────────────────────────────────
 
@@ -269,7 +294,7 @@ class Parser:
     # ── property ──────────────────────────────────────────────────────────────
 
     def _parse_property(self) -> PropertyNode:
-        """Parse a single `key: value` property."""
+        """Parse a single `key: value` property, including nested objects."""
         key_tok = self._advance()  # STRING (key name)
         loc = self._loc(key_tok)
         key = str(key_tok.value)
@@ -286,17 +311,38 @@ class Parser:
 
         self._expect(TT.COLON, hint=f"Property '{key}' must be followed by ':'. Example: {key}: \"value\"")
 
+        # Determine what follows the colon
+        next_tok = self._peek()
+
+        if next_tok.type == TT.NEWLINE:
+            # Could be YAML-style indented block OR just a newline before next prop
+            # Check if the next non-empty token is indented deeper than key_tok
+            value = self._try_parse_indented_block(key_tok)
+            if value is not None:
+                return PropertyNode(key=key, value=value, loc=loc)
+            # Not an indented block — error, there's no value
+            raise self._error(
+                f"Expected a value after '{key}:'",
+                next_tok,
+                got="end of line",
+                expected="a value, '{' for nested object, or indented block",
+                hint=f"Provide a value: {key}: \"value\"  or start an indented block.",
+            )
+
         value = self._parse_value()
         return PropertyNode(key=key, value=value, loc=loc)
 
     # ── value ─────────────────────────────────────────────────────────────────
 
-    def _parse_value(self) -> Union[LiteralNode, ListNode]:
-        """Parse a scalar value or a list."""
+    def _parse_value(self) -> Union[LiteralNode, ListNode, MapNode]:
+        """Parse a scalar value, a list, or a nested map."""
         tok = self._peek()
 
         if tok.type == TT.LBRACKET:
             return self._parse_list()
+
+        if tok.type == TT.LBRACE:
+            return self._parse_map()
 
         if tok.type in (TT.STRING, TT.INTEGER, TT.FLOAT, TT.BOOL, TT.NULL):
             self._advance()
@@ -305,9 +351,132 @@ class Parser:
         raise self._error(
             "Expected a value",
             tok,
-            expected='a string, number, boolean (true/false), null, or list',
+            expected='a string, number, boolean (true/false), null, list, or nested object { }',
             hint='String values must be quoted: key: "value"',
         )
+
+    def _parse_map(self) -> MapNode:
+        """
+        Parse a nested map: { key: value, key: value }.
+
+        Supports both inline and multi-line forms:
+            { min: 2, max: 10 }
+            {
+                min: 2,
+                max: 10
+            }
+        """
+        open_tok = self._advance()  # {
+        loc = self._loc(open_tok)
+        properties: list[PropertyNode] = []
+
+        self._skip_newlines()
+        while self._peek().type != TT.RBRACE:
+            if self._peek().type == TT.EOF:
+                raise self._error("Unterminated nested object — missing '}'", open_tok,
+                                   hint="Close the nested object with '}'")
+
+            if self._peek().type == TT.STRING:
+                prop = self._parse_property()
+                properties.append(prop)
+                # Accept comma separator (optional in multi-line)
+                if self._peek().type == TT.COMMA:
+                    self._advance()
+                self._skip_newlines()
+            else:
+                raise self._error(
+                    "Expected a property key inside nested object",
+                    self._peek(),
+                    expected="a property name (e.g. min, max)",
+                    hint="Properties use colon notation: key: value",
+                )
+
+        self._expect(TT.RBRACE, hint="Close the nested object with '}'")
+        return MapNode(properties=properties, loc=loc)
+
+    def _try_parse_indented_block(self, key_tok: Token) -> Optional[MapNode]:
+        """
+        Try to parse a YAML-style indented block after 'key:\\n'.
+
+        Returns a MapNode if the next meaningful token is indented deeper
+        than key_tok. Returns None otherwise (caller should handle as error).
+
+        Indentation rules:
+        - A block starts when the next property has column > key_tok.column
+        - All properties in the same block must have the same column
+        - The block ends when a token at column <= key_tok.column appears
+        - Inconsistent indentation within a block raises LoomSyntaxError
+        """
+        # Save position so we can backtrack
+        saved_pos = self._pos
+        key_col = key_tok.column
+
+        # Consume the NEWLINE(s) after the colon
+        while self._peek().type == TT.NEWLINE:
+            self._advance()
+
+        next_tok = self._peek()
+
+        # If EOF, RBRACE, DIRECTIVE, or same/lesser indentation → not an indented block
+        if next_tok.type in (TT.EOF, TT.RBRACE, TT.DIRECTIVE):
+            self._pos = saved_pos
+            return None
+
+        if next_tok.type != TT.STRING:
+            self._pos = saved_pos
+            return None
+
+        # Check indentation: next token must be deeper than the key
+        if next_tok.column <= key_col:
+            self._pos = saved_pos
+            return None
+
+        # We have an indented block! Record the expected indentation level
+        block_col = next_tok.column
+        loc = self._loc(next_tok)
+        properties: list[PropertyNode] = []
+
+        while True:
+            self._skip_newlines()
+            tok = self._peek()
+
+            # End conditions
+            if tok.type in (TT.EOF, TT.RBRACE, TT.DIRECTIVE):
+                break
+
+            if tok.type != TT.STRING:
+                break
+
+            # Check indentation
+            if tok.column < block_col:
+                # Returned to parent level or higher → end of block
+                break
+
+            if tok.column > block_col:
+                # Deeper than expected — this is an error (inconsistent indentation)
+                # Unless it's handled by a recursive indented block in _parse_property
+                # But at this level, the first property of the block should be at block_col
+                raise self._error(
+                    "Inconsistent indentation inside block",
+                    tok,
+                    got=f"column {tok.column}",
+                    expected=f"column {block_col} (same as the first property in this block)",
+                    hint=f"Align all properties at the same indentation level.",
+                )
+
+            # tok.column == block_col — parse a property
+            prop = self._parse_property()
+            properties.append(prop)
+            # Accept optional comma
+            if self._peek().type == TT.COMMA:
+                self._advance()
+
+        if not properties:
+            # Indented block with no properties — shouldn't happen, but backtrack
+            self._pos = saved_pos
+            return None
+
+        return MapNode(properties=properties, loc=loc)
 
     def _parse_list(self) -> ListNode:
         """Parse a list: ["a", "b", 3]."""

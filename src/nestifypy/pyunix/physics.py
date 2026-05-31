@@ -285,11 +285,24 @@ class PhysicsWorldSystem:
         self.debug_draw:  bool    = False
         self._bodies:     List[Any]                      = []
         self._active_collisions: Set[Tuple[int, int]]    = set()
+        # Spatial hash cell size — tune to roughly 2× the largest collider
+        self._cell_size: float = 64.0
 
     # ── Registration ─────────────────────────
 
     def set_gravity(self, x: float, y: float) -> None:
         self.gravity = Vector2(x, y)
+
+    def set_cell_size(self, size: float) -> None:
+        """
+        Set the spatial hash cell size in pixels.
+
+        A good value is roughly 2× the average collider dimension.
+        Smaller cells = fewer false-positive pairs but more memory.
+        Larger cells = more pairs tested but cheaper to build.
+        Default is 64.
+        """
+        self._cell_size = max(1.0, size)
 
     def register(self, entity: Any) -> None:
         if entity not in self._bodies:
@@ -303,6 +316,64 @@ class PhysicsWorldSystem:
             p for p in self._active_collisions
             if p[0] != eid and p[1] != eid
         }
+
+    # ── Spatial Hash ─────────────────────────
+
+    def _cell(self, x: float, y: float) -> Tuple[int, int]:
+        cs = self._cell_size
+        return (int(x // cs), int(y // cs))
+
+    def _cells_for_entity(self, entity: Any) -> List[Tuple[int, int]]:
+        """Return all grid cells overlapped by the entity's collider AABB."""
+        col = getattr(entity, "collider", None)
+        if col is None:
+            return []
+        pos = Vector2(entity.x, entity.y)
+        if isinstance(col, BoxCollider):
+            l, t, r, b = col.get_bounds(pos)
+        elif isinstance(col, CircleCollider):
+            c = col.center(pos)
+            r_val = col.radius
+            l, t, r, b = c.x - r_val, c.y - r_val, c.x + r_val, c.y + r_val
+        else:
+            return [self._cell(entity.x, entity.y)]
+
+        cs = self._cell_size
+        cells = []
+        cx = int(l // cs)
+        while cx * cs <= r:
+            cy = int(t // cs)
+            while cy * cs <= b:
+                cells.append((cx, cy))
+                cy += 1
+            cx += 1
+        return cells or [self._cell(entity.x, entity.y)]
+
+    def _broad_phase(self) -> List[Tuple[Any, Any]]:
+        """
+        Build candidate collision pairs using spatial hashing.
+
+        Returns a deduplicated list of (e1, e2) pairs that share at least
+        one grid cell — a necessary (but not sufficient) condition for overlap.
+        """
+        grid: dict = {}
+        for entity in self._bodies:
+            if getattr(entity, "collider", None) is None:
+                continue
+            for cell in self._cells_for_entity(entity):
+                grid.setdefault(cell, []).append(entity)
+
+        seen: Set[Tuple[int, int]] = set()
+        pairs = []
+        for occupants in grid.values():
+            n = len(occupants)
+            for i in range(n):
+                for j in range(i + 1, n):
+                    key = tuple(sorted((id(occupants[i]), id(occupants[j]))))
+                    if key not in seen:
+                        seen.add(key)
+                        pairs.append((occupants[i], occupants[j]))
+        return pairs
 
     # ── Step ─────────────────────────────────
 
@@ -336,51 +407,43 @@ class PhysicsWorldSystem:
 
             rb._check_sleep(dt)
 
-        # ── Collision Detection ───────────────
-        bodies = self._bodies
-        n = len(bodies)
-        for i in range(n):
-            e1  = bodies[i]
+        # ── Collision Detection (spatial hash broad phase) ────────────
+        for e1, e2 in self._broad_phase():
             rb1 = getattr(e1, "rigidbody", None)
             c1  = getattr(e1, "collider",  None)
-            if not c1:
+            rb2 = getattr(e2, "rigidbody", None)
+            c2  = getattr(e2, "collider",  None)
+            if not c1 or not c2:
                 continue
-            p1  = Vector2(e1.x, e1.y)
 
-            for j in range(i + 1, n):
-                e2  = bodies[j]
-                rb2 = getattr(e2, "rigidbody", None)
-                c2  = getattr(e2, "collider",  None)
-                if not c2:
-                    continue
+            # Layer mask check
+            if not self._can_collide(e1, rb1, e2, rb2):
+                continue
 
-                # Layer mask check
-                if not self._can_collide(e1, rb1, e2, rb2):
-                    continue
+            p1 = Vector2(e1.x, e1.y)
+            p2 = Vector2(e2.x, e2.y)
+            result = self._detect(c1, p1, c2, p2)
+            if result is None:
+                continue
 
-                p2 = Vector2(e2.x, e2.y)
-                result = self._detect(c1, p1, c2, p2)
-                if result is None:
-                    continue
+            normal, depth = result
+            is_trigger = c1.is_trigger or c2.is_trigger
+            pair_id = tuple(sorted((id(e1), id(e2))))
+            current_collisions.add(pair_id)
 
-                normal, depth = result
-                is_trigger = c1.is_trigger or c2.is_trigger
-                pair_id = tuple(sorted((id(e1), id(e2))))
-                current_collisions.add(pair_id)
+            ci1 = CollisionInfo(e2,  normal, depth, is_trigger)
+            ci2 = CollisionInfo(e1, -normal, depth, is_trigger)
 
-                ci1 = CollisionInfo(e2,  normal, depth, is_trigger)
-                ci2 = CollisionInfo(e1, -normal, depth, is_trigger)
+            hook = "on_collision_enter" if pair_id not in self._active_collisions else "on_collision_stay"
+            trig_hook = "on_trigger_enter" if pair_id not in self._active_collisions else None
 
-                hook = "on_collision_enter" if pair_id not in self._active_collisions else "on_collision_stay"
-                trig_hook = "on_trigger_enter" if pair_id not in self._active_collisions else None
-
-                if is_trigger:
-                    e1._dispatch(trig_hook or "on_trigger_enter", ci1)
-                    e2._dispatch(trig_hook or "on_trigger_enter", ci2)
-                else:
-                    e1._dispatch(hook, ci1)
-                    e2._dispatch(hook, ci2)
-                    self._resolve(e1, rb1, c1, e2, rb2, c2, normal, depth)
+            if is_trigger:
+                e1._dispatch(trig_hook or "on_trigger_enter", ci1)
+                e2._dispatch(trig_hook or "on_trigger_enter", ci2)
+            else:
+                e1._dispatch(hook, ci1)
+                e2._dispatch(hook, ci2)
+                self._resolve(e1, rb1, c1, e2, rb2, c2, normal, depth)
 
         # ── Exit callbacks ────────────────────
         for pair in (self._active_collisions - current_collisions):

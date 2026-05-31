@@ -83,7 +83,7 @@ class Application:
             from nestifypy.ignite.web.server import WebServer
             if self._context.container.has(WebServer):
                 server = self._context.get_bean(WebServer)
-                server.run()
+                await server.run()
 
     def _register_components(self):
         for cls in _COMPONENT_REGISTRY:

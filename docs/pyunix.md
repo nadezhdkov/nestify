@@ -26,7 +26,8 @@
 18. [Text — Renderização de Texto](#18-text--renderização-de-texto)
 19. [Math — Vetores e Cores](#19-math--vetores-e-cores)
 20. [Window — Gerenciamento da Janela](#20-window--gerenciamento-da-janela)
-21. [Exemplo Completo — Jogo Simples](#21-exemplo-completo--jogo-simples)
+21. [Save — Sistema de Salvamento](#21-save--sistema-de-salvamento)
+22. [Exemplo Completo — Jogo Simples](#22-exemplo-completo--jogo-simples)
 
 ---
 
@@ -51,7 +52,7 @@ A pyunix é composta por módulos independentes que colaboram entre si. O fluxo 
   @Game.draw(screen)← renderização por frame
 ```
 
-Todos os singletons globais (`Camera`, `Input`, `Audio`, `Assets`, `Timer`, `Event`, `PhysicsWorld`, `Scene`) são importados diretamente dos módulos correspondentes e já estão prontos para uso — sem necessidade de instanciar nada manualmente.
+Todos os singletons globais (`Camera`, `Input`, `Audio`, `Assets`, `Timer`, `Event`, `PhysicsWorld`, `Scene`, `Save`) são importados diretamente dos módulos correspondentes e já estão prontos para uso — sem necessidade de instanciar nada manualmente.
 
 ---
 
@@ -266,6 +267,8 @@ todos_os_goblins = inimigos.find_by_tag("goblin")
 inimigos.purge_destroyed()
 ```
 
+> **Regra do draw:** se a entidade define `@Sprite.draw`, esse hook é inteiramente responsável pela renderização — chame `self.draw_self()` dentro dele. Se a entidade **não** define o hook mas possui `image`, o `SpriteGroup` chama `draw_self()` automaticamente como fallback. Isso evita que o sprite seja desenhado duas vezes.
+
 ---
 
 ## 5. Transform — Posição, Rotação e Escala
@@ -432,6 +435,19 @@ collider = BoxCollider(32, 32, material=material_borracha)
 PhysicsWorld.set_gravity(0, 980)    # gravidade padrão (para baixo)
 PhysicsWorld.set_gravity(0, 0)      # sem gravidade (top-down)
 PhysicsWorld.set_gravity(0, 300)    # gravidade suave
+```
+
+### Spatial Hashing — Performance com Muitos Corpos
+
+A detecção de colisão usa **spatial hashing** internamente: o mundo é dividido em células de grade e apenas pares de entidades que ocupam a mesma célula são testados. Isso reduz a complexidade de O(n²) para próximo de O(n), permitindo centenas de corpos físicos sem queda de FPS.
+
+O tamanho padrão da célula é **64 px**. Ajuste para melhor performance conforme o tamanho médio dos seus colisores:
+
+```python
+# Regra geral: célula ≈ 2× a dimensão do maior colisador
+PhysicsWorld.set_cell_size(64)    # padrão — bom para jogos com tiles de 32 px
+PhysicsWorld.set_cell_size(128)   # colisores grandes (veículos, chefes)
+PhysicsWorld.set_cell_size(32)    # colisores muito pequenos (projéteis, partículas físicas)
 ```
 
 ### Aplicando Forças
@@ -752,10 +768,12 @@ Audio.music_playing           # True/False
 ```python
 Audio.play_sfx("explosao.wav")
 Audio.play_sfx("tiro.wav", volume=0.6)
-Audio.play_sfx("moeda.wav", pitch_variance=0.15)  # variação aleatória de pitch
+Audio.play_sfx("moeda.wav", pitch_variance=0.15)  # variação aleatória de pitch (requer numpy)
 Audio.play_sfx("laser.wav", loops=-1)             # loop infinito
 Audio.set_sfx_volume(0.5)
 ```
+
+> **`pitch_variance`:** requer `numpy`. O som gerado é mantido em memória enquanto toca e descartado automaticamente ao terminar — sem risco de corte prematuro pelo garbage collector.
 
 ### Áudio Posicional 2D
 
@@ -788,6 +806,8 @@ Audio.is_paused      # True/False
 from nestifypy.pyunix.particles import ParticleSystem
 from nestifypy.pyunix.math import Color, Vector2
 ```
+
+> **Performance:** o `ParticleSystem` usa um **object pool de tamanho fixo**. Os objetos de partícula são alocados uma única vez ao chamar `configure()` ou `start()` e depois apenas *reativados* — sem alocações por frame, sem pressão no garbage collector. Emissores de alta frequência (fogo, faíscas, rain) se beneficiam diretamente disso.
 
 ### Explosão (burst)
 
@@ -937,7 +957,7 @@ class MenuCena:
     @Scene.update
     def atualizar(self, dt):
         if Input.is_just_pressed("RETURN"):
-            Scene.switch("jogo")
+            Scene.switch("jogo", data={"dificuldade": "normal"})
 
     @Scene.draw
     def renderizar(self, surface):
@@ -946,9 +966,12 @@ class MenuCena:
 
 @Scene("jogo")
 class JogoCena:
+
     @Scene.load
-    def ao_carregar(self):
-        self.jogador = Jogador()
+    def ao_carregar(self, data=None):
+        # data contém o que foi passado por push/switch
+        dificuldade = data.get("dificuldade", "normal") if data else "normal"
+        self.jogador = Jogador(dificuldade=dificuldade)
 
     @Scene.update
     def atualizar(self, dt):
@@ -963,14 +986,22 @@ class JogoCena:
 ### Operações de Pilha
 
 ```python
-Scene.push("menu")        # empurra nova cena, pausa a atual
-Scene.pop()               # remove cena do topo, retorna à anterior
-Scene.switch("jogo")      # substitui a cena do topo
-Scene.pop_all()           # limpa toda a pilha
+Scene.push("menu")                            # empurra nova cena, pausa a atual
+Scene.push("pause_menu", data={"origem": "jogo"})  # com dados opcionais
+
+Scene.pop()                                   # remove cena do topo, retorna à anterior
+Scene.pop(data={"resultado": "vitoria"})      # passa dados para o @Scene.resume da cena abaixo
+
+Scene.switch("jogo")                          # substitui a cena do topo
+Scene.switch("jogo", data={"nivel": 2})       # com dados para o @Scene.load
+
+Scene.pop_all()                               # limpa toda a pilha
 
 # Forçar recriação de uma cena (descarta o estado salvo)
 Scene.destroy_instance("menu")
 ```
+
+> **Compatibilidade:** o parâmetro `data` é totalmente opcional. Hooks `@Scene.load` sem o argumento continuam funcionando — o dispatch detecta a assinatura e chama sem parâmetro se necessário.
 
 ### No Loop Principal
 
@@ -1011,9 +1042,16 @@ Timer.cancel_tag("spawn")
 # Cancelar todos
 Timer.clear()
 
+# Pausar e retomar TODOS os timers
+Timer.pause()     # tick() fica inativo enquanto pausado
+Timer.resume()
+Timer.is_paused   # True/False
+
 # Quantidade de timers ativos
 print(Timer.count)
 ```
+
+> **Integração com pausa do jogo:** chame `Timer.pause()` dentro do `@Game.on_pause` e `Timer.resume()` dentro do `@Game.on_resume` para que os timers respeitem o estado de pausa da simulação.
 
 ---
 
@@ -1299,7 +1337,139 @@ print(Window.center_pos)  # (400, 300)
 
 ---
 
-## 21. Exemplo Completo — Jogo Simples
+## 21. Save — Sistema de Salvamento
+
+**Módulo:** `nestifypy.pyunix.save`
+
+Sistema de save/load baseado em JSON com suporte a múltiplos slots, valores default, auto-save por timer e uma API simples de get/set. Tudo é lazy — nada é lido do disco até o primeiro acesso.
+
+```python
+from nestifypy.pyunix.save import Save
+```
+
+### Configuração Inicial
+
+```python
+@Game.start
+def iniciar(self):
+    Save.set_path("saves/")          # diretório dos arquivos .json
+    Save.set_defaults({
+        "pontuacao":  0,
+        "nivel":      1,
+        "vida_max":   3,
+        "upgrades":   [],
+        "opcoes": {
+            "volume_musica": 0.8,
+            "volume_sfx":    1.0,
+            "fullscreen":    False,
+        },
+    })
+    Save.load()   # carrega o slot 1 (ou inicializa com defaults se não existir)
+```
+
+### Leitura e Escrita
+
+```python
+# Ler (retorna default se a chave não existir no save)
+pontos  = Save.get("pontuacao")          # 0
+nivel   = Save.get("nivel")              # 1
+opcoes  = Save.get("opcoes")             # dict completo
+
+# Escrever em memória (não vai para o disco ainda)
+Save.set("pontuacao", 1500)
+Save.set("nivel", 3)
+Save.set("upgrades", ["dash", "double_jump"])
+
+# Verificar existência
+if Save.has("chave_secreta"):
+    desbloquear_easter_egg()
+
+# Remover uma chave
+Save.delete("dado_temporario")
+
+# Bulk update
+Save.update({"pontuacao": 2000, "nivel": 4})
+
+# Snapshot completo
+tudo = Save.all()    # dict com todos os dados em memória
+```
+
+### Persistindo no Disco
+
+```python
+Save.commit()     # ou Save.save() — sinônimos
+```
+
+> **Importante:** `Save.set()` só modifica a memória. Chame `Save.commit()` explicitamente (ex.: ao sair de uma fase, ao fechar o jogo) ou use `auto_save`.
+
+### Auto-Save
+
+```python
+# Habilitar auto-save a cada 60 segundos
+Save.auto_save(interval=60.0)
+
+# Obrigatório: chamar tick no loop do jogo
+@Game.update
+def atualizar(self, dt):
+    Save.tick(dt)   # só escreve no disco quando o intervalo elapsa E há dados novos
+```
+
+### Múltiplos Slots
+
+```python
+# Slot atual (padrão: 1)
+Save.current_slot        # 1
+
+# Verificar se um slot existe
+Save.slot_exists(2)      # False
+
+# Trocar de slot (commit o atual antes se necessário)
+Save.commit()
+Save.use_slot(2)
+Save.load()
+
+# Listar todos os slots com arquivo no disco
+slots = Save.list_slots()   # [1, 2, 3]
+
+# Deletar um slot do disco
+Save.delete_slot(2)
+```
+
+### Reset e Estado
+
+```python
+Save.reset()             # volta os dados em memória para os defaults (não apaga o disco)
+Save.commit()            # persiste o reset
+
+Save.is_dirty            # True se há mudanças não salvas em memória
+```
+
+### Exemplo de Uso Típico
+
+```python
+# Ao completar uma fase
+def fase_concluida(self):
+    Save.set("nivel", Save.get("nivel") + 1)
+    Save.set("pontuacao", Save.get("pontuacao") + self.pontos_fase)
+    Save.commit()
+
+# Ao abrir o menu de opções
+def aplicar_opcoes(self, volume_musica, fullscreen):
+    opcoes = Save.get("opcoes")
+    opcoes["volume_musica"] = volume_musica
+    opcoes["fullscreen"]    = fullscreen
+    Save.set("opcoes", opcoes)
+    Save.commit()
+
+# Ao fechar o jogo
+@Game.stop
+def ao_fechar(self):
+    Save.commit()   # garante que nada seja perdido
+```
+
+---
+
+## 22. Exemplo Completo — Jogo Simples
 
 Um platformer minimalista com física, câmera suave e HUD de pontos.
 
@@ -1313,6 +1483,7 @@ from nestifypy.pyunix.assets import Assets
 from nestifypy.pyunix.math import Vector2, Color
 from nestifypy.pyunix.timer import Timer
 from nestifypy.pyunix.audio import Audio
+from nestifypy.pyunix.save import Save
 
 
 class Jogador(Entity):
@@ -1323,7 +1494,6 @@ class Jogador(Entity):
             rigidbody=Rigidbody(
                 body_type=BodyType.DYNAMIC,
                 gravity_scale=1.0,
-                freeze_x=False,
             ),
             collider=BoxCollider(28, 48),
         )
@@ -1341,9 +1511,10 @@ class Jogador(Entity):
 
     @Sprite.on_collision_enter
     def ao_colidir(self, info):
-        if info.normal.y < -0.5:  # colisão vindo de cima
+        if info.normal.y < -0.5:
             self.no_chao = True
 
+    # @Sprite.draw definido: SpriteGroup não chamará draw_self automaticamente
     @Sprite.draw
     def renderizar(self, surface):
         import pygame
@@ -1360,14 +1531,16 @@ class Plataforma(Entity):
             collider=BoxCollider(largura, altura),
         )
         self._largura = largura
-        self._altura = altura
+        self._altura  = altura
 
     @Sprite.draw
     def renderizar(self, surface):
         import pygame
-        rect = pygame.Rect(self.x - self._largura//2,
-                           self.y - self._altura//2,
-                           self._largura, self._altura)
+        rect = pygame.Rect(
+            self.x - self._largura // 2,
+            self.y - self._altura  // 2,
+            self._largura, self._altura,
+        )
         pygame.draw.rect(surface, (80, 160, 80), rect)
 
 
@@ -1376,32 +1549,45 @@ class MeuJogo:
 
     @Game.start
     def iniciar(self):
+        # Input
         Input.bind_action("pular", "SPACE", "UP", "W")
         Input.bind_axis("horizontal", positive="RIGHT", negative="LEFT")
-        Input.bind_axis("vertical",   positive="DOWN",  negative="UP")
 
+        # Física
         PhysicsWorld.set_gravity(0, 900)
+        PhysicsWorld.set_cell_size(64)   # spatial hash tunado para tiles de 32 px
 
+        # Entidades
         self.jogador = Jogador()
         self.plataformas = SpriteGroup()
         self.plataformas.add(
-            Plataforma(400, 420, 800, 40),   # chão
+            Plataforma(400, 420, 800, 40),
             Plataforma(200, 320, 120),
             Plataforma(450, 240, 120),
             Plataforma(650, 160, 120),
         )
 
+        # Câmera
         Camera.follow(self.jogador, smooth=0.1)
         Camera.set_world_bounds(0, 0, 800, 450)
 
-        self.pontos = 0
-        Timer.every(1.0, lambda: self._adicionar_pontos())
+        # Save — carrega pontuação anterior
+        Save.set_path("saves/")
+        Save.set_defaults({"pontuacao": 0, "recorde": 0})
+        Save.load()
+        self.pontos = Save.get("pontuacao")
+        Save.auto_save(interval=30.0)   # auto-save a cada 30 s
+
+        # Timer de pontuação
+        Timer.every(1.0, self._adicionar_pontos)
 
     def _adicionar_pontos(self):
         self.pontos += 10
+        Save.set("pontuacao", self.pontos)
 
     @Game.update
     def atualizar(self, dt):
+        Save.tick(dt)   # necessário para o auto-save funcionar
         self.jogador._dispatch("update", dt)
         self.plataformas.update(dt)
 
@@ -1420,7 +1606,18 @@ class MeuJogo:
 
     @Game.on_pause
     def pausado(self):
-        print("Jogo pausado")
+        Timer.pause()   # congela os timers enquanto pausado
+
+    @Game.on_resume
+    def despausado(self):
+        Timer.resume()
+
+    @Game.stop
+    def ao_fechar(self):
+        # Atualiza recorde e persiste tudo antes de sair
+        if self.pontos > Save.get("recorde"):
+            Save.set("recorde", self.pontos)
+        Save.commit()
 
 
 if __name__ == "__main__":
@@ -1446,7 +1643,11 @@ if __name__ == "__main__":
 - Tiles fora da tela são culled automaticamente pelo `TileMap.draw()` — não é necessário filtrar manualmente.
 - Corpos com velocidade próxima de zero entram em "sleep" automaticamente, economizando CPU.
 - Para debug de física, use `PhysicsWorld.draw_debug(screen, Camera.offset)` temporariamente.
+- Ajuste `PhysicsWorld.set_cell_size()` para o tamanho médio dos seus colisores — célula ≈ 2× a dimensão do maior colisador para menor número de testes desnecessários.
+- `ParticleSystem` usa pool fixo: a alocação acontece apenas uma vez em `configure()`. Para emissores que mudam de `count` frequentemente, prefira um pool grande e ajuste `emit_rate` em vez de reconfigurar `count`.
+- `Save.commit()` faz I/O de disco — não chame a cada frame. Use `auto_save(interval=N)` + `Save.tick(dt)` para persistência periódica sem impacto no FPS.
+- Ao pausar o jogo, chame `Timer.pause()` para congelar timers junto com a simulação.
 
 ---
 
-*Documentação gerada para nestifypy.pyunix — baseada no código-fonte dos módulos `app`, `sprite`, `physics`, `camera`, `assets`, `animation`, `audio`, `particles`, `tween`, `scene`, `timer`, `events`, `tilemap`, `text`, `math`, `window`, `transform`, `input` e `fonts`.*
+*Documentação gerada para nestifypy.pyunix — baseada no código-fonte dos módulos `app`, `sprite`, `physics`, `camera`, `assets`, `animation`, `audio`, `particles`, `tween`, `scene`, `timer`, `events`, `tilemap`, `text`, `math`, `window`, `transform`, `input`, `fonts` e `save`.*

@@ -12,7 +12,7 @@ try:
 except ImportError:
     pass
 
-from nestifypy.core import Logger
+from nestifypy.slogger import Logger
 from nestifypy.yaml.models import DotDict
 from nestifypy.yaml.registry import PathRegistry
 from nestifypy.yaml.cache import ConfigCache

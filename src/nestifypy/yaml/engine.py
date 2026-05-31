@@ -15,7 +15,7 @@ try:
 except ImportError:
     pass
 
-from nestifypy.core import ConfigError, Logger
+from nestifypy.slogger import ConfigError, Logger
 from nestifypy.yaml.models import DotDict
 from nestifypy.yaml.runtime import YamlRuntime
 
@@ -184,6 +184,11 @@ class YamlEngine:
         rt = cls.runtime()
         rt.ensure_initialized()
         rt.watcher.watch(enabled, [rt.project_root])
+
+    @classmethod
+    def auto_reload(cls, enabled: bool = True) -> None:
+        """Alias for watch() to enable or disable hot reload."""
+        cls.watch(enabled)
 
     @classmethod
     def on_reload(cls, callback: typing.Callable) -> None:

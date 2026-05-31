@@ -43,6 +43,19 @@ class TimerManager:
 
     def __init__(self) -> None:
         self._timers: List[_TimerEntry] = []
+        self._paused: bool = False
+
+    def pause(self) -> None:
+        """Freeze all timers — tick() calls are ignored while paused."""
+        self._paused = True
+
+    def resume(self) -> None:
+        """Resume all timers from where they stopped."""
+        self._paused = False
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
 
     def after(self, seconds: float, callback: Callable, tag: str = "") -> _TimerEntry:
         """Fire `callback` once after `seconds` seconds."""
@@ -68,6 +81,8 @@ class TimerManager:
 
     def tick(self, dt: float) -> None:
         """Advance all active timers. Called automatically by the engine."""
+        if self._paused:
+            return
         self._timers = [t for t in self._timers if t.active]
         for timer in list(self._timers):
             timer.tick(dt)

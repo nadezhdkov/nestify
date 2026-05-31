@@ -189,7 +189,7 @@ class System:
     @staticmethod
     def cpu_count_physical() -> Optional[int]:
         """
-        Physical (core) CPU count.
+        Physical (slogger) CPU count.
 
         Returns ``None`` if the information is unavailable without
         third-party packages.
@@ -200,7 +200,7 @@ class System:
                 ids: set = set()
                 with open("/proc/cpuinfo") as fh:
                     for line in fh:
-                        if line.startswith("core id"):
+                        if line.startswith("slogger id"):
                             ids.add(line.split(":")[1].strip())
                 return len(ids) or None
         except OSError:

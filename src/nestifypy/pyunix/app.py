@@ -1,7 +1,7 @@
 """
 nestifypy.pyunix.app
 --------------------
-The core engine runtime: Game decorator, loop, and lifecycle management.
+The slogger engine runtime: Game decorator, loop, and lifecycle management.
 
 Provides a Unity-style decorator-driven game loop. Decorate a plain Python
 class with `@Game(...)` to turn it into a runnable game application.

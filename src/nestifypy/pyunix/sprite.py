@@ -471,11 +471,23 @@ class SpriteGroup:
                 s._dispatch("fixed_update")
 
     def draw(self, surface: Any, offset: Tuple[float, float] = (0.0, 0.0)) -> None:
+        """
+        Dispatch the draw hook for all visible, active sprites.
+
+        If a sprite has NO @Sprite.draw method but has an image, draw_self is
+        called automatically as a fallback.  Sprites that define @Sprite.draw
+        are expected to call self.draw_self() themselves — this prevents the
+        double-render bug where draw_self ran both inside the hook AND here.
+        """
         for s in self.sprites:
-            if s.visible and s.active:
+            if not (s.visible and s.active):
+                continue
+            if s._hooks["draw"]:
+                # User-defined draw hook — let it handle rendering
                 s._dispatch("draw", surface)
-                if s.image and _HAS_PYGAME:
-                    s.draw_self(surface, offset)
+            elif s.image and _HAS_PYGAME:
+                # No hook defined: auto-render as a convenience fallback
+                s.draw_self(surface, offset)
 
     def find_by_tag(self, tag: str) -> List[Entity]:
         """Return all entities with the given tag."""

@@ -44,6 +44,9 @@ def paths() -> List[str]:
 def watch(enabled: bool = True) -> None:
     YamlEngine.watch(enabled)
 
+def auto_reload(enabled: bool = True) -> None:
+    YamlEngine.auto_reload(enabled)
+
 def on_reload(callback: Callable) -> None:
     YamlEngine.on_reload(callback)
 
@@ -78,6 +81,7 @@ __all__ = [
     "where",
     "paths",
     "watch",
+    "auto_reload",
     "on_reload",
     "validate",
     "registry",

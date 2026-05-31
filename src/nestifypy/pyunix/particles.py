@@ -86,6 +86,10 @@ class ParticleSystem:
     """
     Manages a pool of particles with birth/death/update/draw logic.
 
+    Uses a fixed-size object pool — particles are *reactivated* rather than
+    allocated/destroyed each frame, which keeps GC pressure near zero even
+    at high emission rates.
+
     Configure once with .configure(), then call .burst() or .start()/.stop()
     for continuous emission.
     """
@@ -105,12 +109,39 @@ class ParticleSystem:
         self._start_size:  float             = 4.0
         self._end_size:    float             = 0.0
         self._gravity:     Vector2           = Vector2.zero()
-        self._spread:      Tuple[float, float] = (0.0, 0.0)   # x/y spawn offset variance
+        self._spread:      Tuple[float, float] = (0.0, 0.0)
 
-        # ── State ──────────────────────────
+        # ── Object pool (allocated once, reused forever) ───────────
         self._pool:       List[_Particle] = []
+        self._pool_built: bool = False        # pool is rebuilt when count changes
         self._active:     bool = False
         self._emit_accum: float = 0.0
+
+    # ── Pool management ──────────────────────
+
+    def _ensure_pool(self) -> None:
+        """Build or resize the fixed pool when count changes."""
+        if self._pool_built and len(self._pool) == self._count:
+            return
+        # Reuse existing slots, add new ones, trim extras
+        for p in self._pool:
+            p.active = False
+        while len(self._pool) < self._count:
+            self._pool.append(_Particle(
+                x=0, y=0, vx=0, vy=0,
+                lifetime=1, age=0,
+                start_color=Color.WHITE, end_color=Color.WHITE,
+                start_size=4, end_size=0, active=False,
+            ))
+        del self._pool[self._count:]
+        self._pool_built = True
+
+    def _next_inactive(self) -> Optional[_Particle]:
+        """Return the first inactive slot in the pool, or None if full."""
+        for p in self._pool:
+            if not p.active:
+                return p
+        return None
 
     # ── Fluent Configuration ─────────────────
 
@@ -128,22 +159,8 @@ class ParticleSystem:
         gravity: Vector2 = None,
         spread: Tuple[float, float] = (0.0, 0.0),
     ) -> "ParticleSystem":
-        """
-        Configure emission parameters. Returns self for chaining.
-
-        Args:
-            count:        Max simultaneous particles (burst uses this as total count).
-            emit_rate:    Particles emitted per second (0 = burst only).
-            lifetime:     (min, max) lifetime in seconds per particle.
-            speed:        (min, max) initial speed in pixels/second.
-            angle:        (min, max) emission angle in degrees (0 = right).
-            start_color:  Color at birth.
-            end_color:    Color at death (alpha fades too).
-            start_size:   Radius in pixels at birth.
-            end_size:     Radius in pixels at death.
-            gravity:      Per-frame acceleration Vector2 (e.g. Vector2(0, 120) for down).
-            spread:       (x_var, y_var) spawn position variance in pixels.
-        """
+        if count != self._count:
+            self._pool_built = False   # pool needs rebuild
         self._count       = count
         self._emit_rate   = emit_rate
         self._lifetime    = lifetime
@@ -160,15 +177,20 @@ class ParticleSystem:
     # ── Emission ─────────────────────────────
 
     def burst(self, count: Optional[int] = None) -> None:
-        """
-        Immediately spawn `count` particles (defaults to configured count).
-        """
+        """Immediately spawn `count` particles (defaults to configured count)."""
+        self._ensure_pool()
         n = count if count is not None else self._count
-        for _ in range(n):
-            self._spawn()
+        spawned = 0
+        for p in self._pool:
+            if spawned >= n:
+                break
+            if not p.active:
+                self._activate(p)
+                spawned += 1
 
     def start(self) -> None:
         """Begin continuous emission (emit_rate particles per second)."""
+        self._ensure_pool()
         self._active = True
 
     def stop(self) -> None:
@@ -176,8 +198,9 @@ class ParticleSystem:
         self._active = False
 
     def clear(self) -> None:
-        """Destroy all active particles immediately."""
-        self._pool.clear()
+        """Deactivate all particles immediately without freeing the pool."""
+        for p in self._pool:
+            p.active = False
         self._emit_accum = 0.0
 
     @property
@@ -193,30 +216,28 @@ class ParticleSystem:
 
     def update(self, dt: float) -> None:
         """Advance all particles by `dt` seconds. Call every frame."""
+        self._ensure_pool()
         gx, gy = self._gravity.x, self._gravity.y
 
-        # Update alive particles
         for p in self._pool:
             if not p.active:
                 continue
             p.age += dt
             if p.age >= p.lifetime:
-                p.active = False
+                p.active = False   # return slot to pool — no allocation
                 continue
             p.vx += gx * dt
             p.vy += gy * dt
             p.x  += p.vx * dt
             p.y  += p.vy * dt
 
-        # Prune dead particles (keep pool lean)
-        self._pool = [p for p in self._pool if p.active]
-
-        # Continuous emission
+        # Continuous emission — reuse inactive pool slots
         if self._active and self._emit_rate > 0:
             self._emit_accum += self._emit_rate * dt
             while self._emit_accum >= 1.0:
-                if len(self._pool) < self._count:
-                    self._spawn()
+                slot = self._next_inactive()
+                if slot is not None:
+                    self._activate(slot)
                 self._emit_accum -= 1.0
 
     def draw(self, surface: Any, offset: Tuple[float, float] = (0.0, 0.0)) -> None:
@@ -244,20 +265,24 @@ class ParticleSystem:
 
     # ── Internal ─────────────────────────────
 
-    def _spawn(self) -> None:
+    def _activate(self, p: _Particle) -> None:
+        """Reset an existing pool slot and mark it active — no allocation."""
         ang = math.radians(random.uniform(*self._angle))
         spd = random.uniform(*self._speed)
-        sx  = self.x + random.uniform(-self._spread[0], self._spread[0])
-        sy  = self.y + random.uniform(-self._spread[1], self._spread[1])
-        lt  = random.uniform(*self._lifetime)
-        self._pool.append(_Particle(
-            x=sx, y=sy,
-            vx=math.cos(ang) * spd,
-            vy=math.sin(ang) * spd,
-            lifetime=lt, age=0.0,
-            start_color=self._start_color,
-            end_color=self._end_color,
-            start_size=self._start_size,
-            end_size=self._end_size,
-            active=True,
-        ))
+        p.x  = self.x + random.uniform(-self._spread[0], self._spread[0])
+        p.y  = self.y + random.uniform(-self._spread[1], self._spread[1])
+        p.vx = math.cos(ang) * spd
+        p.vy = math.sin(ang) * spd
+        p.lifetime   = random.uniform(*self._lifetime)
+        p.age        = 0.0
+        p.start_color = self._start_color
+        p.end_color   = self._end_color
+        p.start_size  = self._start_size
+        p.end_size    = self._end_size
+        p.active     = True
+
+    def _spawn(self) -> None:
+        """Legacy helper kept for any subclasses — delegates to _activate."""
+        slot = self._next_inactive()
+        if slot is not None:
+            self._activate(slot)

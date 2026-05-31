@@ -788,6 +788,178 @@ def _():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Nested Objects & YAML-style Indentation Tests
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n  Nested Objects & YAML-style Indentation")
+
+@test("parses inline nested object")
+def _():
+    rt = loom('''
+        @module("db")
+        @db {
+            pool: { min: 2, max: 10 }
+        }
+    ''')
+    assert rt.env.db.pool.min.int == 2
+    assert rt.env.db.pool.max.int == 10
+    # Flat index check
+    assert rt.env.pool.min.int == 2
+    assert rt.env.pool.max.int == 10
+
+@test("parses multi-line nested object")
+def _():
+    rt = loom('''
+        @module("db")
+        @db {
+            pool: {
+                min: 2,
+                max: 10
+            }
+        }
+    ''')
+    assert rt.env.db.pool.min.int == 2
+    assert rt.env.db.pool.max.int == 10
+
+@test("parses YAML-style indented nested block")
+def _():
+    rt = loom('''
+        @module("db")
+        @db {
+            pool:
+                min: 2
+                max: 10
+        }
+    ''')
+    assert rt.env.db.pool.min.int == 2
+    assert rt.env.db.pool.max.int == 10
+
+@test("parses empty nested object")
+def _():
+    rt = loom('''
+        @module("db")
+        @db {
+            pool: {}
+        }
+    ''')
+    assert len(rt.env.db.pool) == 0
+
+@test("parses arbitrary nesting depth")
+def _():
+    rt = loom('''
+        @module("db")
+        @db {
+            limits:
+                pool:
+                    max: 10
+                    min: 1
+        }
+    ''')
+    assert rt.env.db.limits.pool.max.int == 10
+    assert rt.env.db.limits.pool.min.int == 1
+
+@test("parses mixed inline and indented nested syntax")
+def _():
+    rt = loom('''
+        @module("db")
+        @db {
+            pool: {
+                limits:
+                    max: 10
+                    min: 1
+            }
+        }
+    ''')
+    assert rt.env.db.pool.limits.max.int == 10
+    assert rt.env.db.pool.limits.min.int == 1
+
+@test("raises LoomSyntaxError on inconsistent indentation inside YAML-style block")
+def _():
+    raised = False
+    try:
+        loom('''
+            @module("db")
+            @db {
+                pool:
+                    min: 2
+                      max: 10
+            }
+        ''')
+    except LoomSyntaxError as e:
+        raised = True
+        assert "Inconsistent indentation" in str(e)
+    assert raised
+
+@test("raises LoomSyntaxError on mixed tabs and spaces in indentation")
+def _():
+    raised = False
+    try:
+        # Use literal tab character mixed with spaces
+        loom('''
+            @module("db")
+            @db {
+                pool:
+                \tmin: 2
+            }
+        ''')
+    except LoomSyntaxError as e:
+        raised = True
+        assert "Mixed tabs and spaces" in str(e)
+    assert raised
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Auto-Discovery Tests
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n  Auto-Discovery")
+
+@test("discovers files in search order and applies profile priority")
+def _():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create config/ directory structure
+        config_dir = os.path.join(tmpdir, "config")
+        os.makedirs(config_dir)
+
+        # 1. Base files
+        with open(os.path.join(tmpdir, "first.loom"), "w") as f:
+            f.write('@module("first")\n@main { val: "root" }')
+
+        with open(os.path.join(config_dir, "second.loom"), "w") as f:
+            f.write('@module("second")\n@main { val: "config" }')
+
+        # Create FileProvider with start directory
+        rt = LoomRuntime()
+        provider = FileProvider("first", base_dir=tmpdir)
+        rt.register_provider(provider)
+        assert rt.env.first.main.val == "root"
+
+        # Discovering 'second' inside config/
+        rt2 = LoomRuntime()
+        provider2 = FileProvider("second", base_dir=tmpdir)
+        rt2.register_provider(provider2)
+        assert rt2.env.second.main.val == "config"
+
+@test("auto-discovery is deterministic with duplicate filenames (chooses shallower/alphabetic)")
+def _():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create two matching filenames at different depths
+        # E.g. base_dir/app.loom vs base_dir/subdir/app.loom
+        subdir = os.path.join(tmpdir, "subdir")
+        os.makedirs(subdir)
+
+        with open(os.path.join(tmpdir, "dup.loom"), "w") as f:
+            f.write('@module("dup")\n@main { val: "shallow" }')
+
+        with open(os.path.join(subdir, "dup.loom"), "w") as f:
+            f.write('@module("dup")\n@main { val: "deep" }')
+
+        rt = LoomRuntime()
+        provider = FileProvider("dup", base_dir=tmpdir)
+        rt.register_provider(provider)
+        # Should deterministically resolve the shallower one first
+        assert rt.env.dup.main.val == "shallow"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Results
 # ─────────────────────────────────────────────────────────────────────────────
 

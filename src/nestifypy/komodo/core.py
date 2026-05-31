@@ -1,5 +1,5 @@
 """
-nestifypy.komodo.core
+nestifypy.komodo.slogger
 -------------------
 The `komodo` namespace — all class-level annotation decorators live here.
 

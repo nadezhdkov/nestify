@@ -121,6 +121,17 @@ class _ScopeProxy:
             val = props[name]
             if isinstance(val, ScopeObject):
                 return _ScopeProxy(runtime, parts + [name], val)
+            # Auto-wrap nested dicts as ScopeObject for attribute access
+            if isinstance(val, dict):
+                module_name = object.__getattribute__(scope, "_module")
+                scope_path = object.__getattribute__(scope, "_path")
+                sub_scope = ScopeObject(
+                    path=f"{scope_path}.{name}",
+                    module=module_name,
+                    properties=val,
+                    parent=scope,
+                )
+                return _ScopeProxy(runtime, parts + [name], sub_scope)
             full_path = ".".join(parts + [name])
             return LoomValue(val, full_path, scope.module)
 

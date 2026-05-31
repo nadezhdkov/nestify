@@ -120,14 +120,14 @@ class Resolver:
                 val = self._extract_value(prop.value)
                 props[prop.key] = val
 
-                # Add to flat index
-                self._index.append(_Entry(
+                # Add to flat index — recursively flatten nested dicts
+                self._index_value(
                     module_name=name,
                     scope_path=scope.path,
                     key=prop.key,
                     value=val,
-                    is_default_scope=scope.is_default,
-                ))
+                    is_default=scope.is_default,
+                )
 
             # Build ScopeObject
             scope_obj = ScopeObject(
@@ -141,12 +141,54 @@ class Resolver:
 
     def _extract_value(self, node: Any) -> Any:
         """Convert an AST value node to a raw Python value."""
-        from nestifypy.loom.ast_nodes import ListNode, LiteralNode
+        from nestifypy.loom.ast_nodes import ListNode, LiteralNode, MapNode
         if isinstance(node, LiteralNode):
             return node.value
         if isinstance(node, ListNode):
             return [item.value for item in node.items]
+        if isinstance(node, MapNode):
+            # Convert MapNode to a nested dict (preserves hierarchy)
+            result: dict[str, Any] = {}
+            for prop in node.properties:
+                result[prop.key] = self._extract_value(prop.value)
+            return result
         return node
+
+    def _index_value(
+        self,
+        module_name: str,
+        scope_path: list[str],
+        key: str,
+        value: Any,
+        is_default: bool,
+    ) -> None:
+        """
+        Add a value to the flat index, recursively flattening nested dicts.
+
+        For a nested value like pool: { max: 10 } inside scope @database,
+        this produces entries:
+            - key="pool", value={max: 10}  (the dict itself, for scope-level access)
+            - key="pool.max", value=10     (leaf, for deep flattened access)
+        """
+        # Always index the value itself (even if it's a dict)
+        self._index.append(_Entry(
+            module_name=module_name,
+            scope_path=scope_path,
+            key=key,
+            value=value,
+            is_default_scope=is_default,
+        ))
+
+        # Recursively flatten nested dicts
+        if isinstance(value, dict):
+            for sub_key, sub_val in value.items():
+                self._index_value(
+                    module_name=module_name,
+                    scope_path=scope_path,
+                    key=f"{key}.{sub_key}",
+                    value=sub_val,
+                    is_default=is_default,
+                )
 
     # ── resolution ────────────────────────────────────────────────────────────
 
@@ -170,22 +212,22 @@ class Resolver:
         # ── Strategy 1: Fully qualified ──────────────────────────────────────
         result = self._try_fully_qualified(path_parts)
         if result is not None:
-            return result
+            return self._wrap_resolved(result)
 
         # ── Strategy 2: Module-level flattened ──────────────────────────────
         result = self._try_module_flattened(path_parts)
         if result is not None:
-            return result
+            return self._wrap_resolved(result)
 
         # ── Strategy 3: Scope-level flattened ───────────────────────────────
         result = self._try_scope_flattened(path_parts)
         if result is not None:
-            return result
+            return self._wrap_resolved(result)
 
         # ── Strategy 4: Global flattened ────────────────────────────────────
         result = self._try_global_flattened(path_parts)
         if result is not None:
-            return result
+            return self._wrap_resolved(result)
 
         # Nothing found
         from nestifypy.loom.exceptions import LoomResolutionError
@@ -197,6 +239,24 @@ class Resolver:
                 "Check your .loom files or use BoltInspector to list available paths."
             ),
         )
+
+    def _wrap_resolved(self, result: Any) -> Any:
+        from nestifypy.loom.scope import LoomValue, ScopeObject
+        if isinstance(result, LoomValue) and isinstance(result.value, dict):
+            return ScopeObject(
+                path=result.path,
+                module=result.module,
+                properties=result.value,
+            )
+        if isinstance(result, ScopeObject):
+            return result
+        if isinstance(result, dict):
+            return ScopeObject(
+                path="",
+                module="",
+                properties=result,
+            )
+        return result
 
     # ── Strategy 1: module.scope_path.key ────────────────────────────────────
 

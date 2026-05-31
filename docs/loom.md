@@ -18,11 +18,13 @@
   - [Declaração de módulo](#declaração-de-módulo)
   - [Scopes](#scopes)
   - [Propriedades e tipos](#propriedades-e-tipos)
+  - [Objetos Aninhados e Indentação](#objetos-aninhados-e-indentação)
   - [Comentários](#comentários)
   - [Imports](#imports)
   - [Default Scopes](#default-scopes)
 - [Runtime](#runtime)
   - [Carregar ficheiros](#carregar-ficheiros)
+  - [Auto-Descoberta de Ficheiros (Auto-Discovery)](#auto-descoberta-de-ficheiros-auto-discovery)
   - [Acesso por atributos](#acesso-por-atributos)
   - [LoomValue e type casts](#loomvalue-e-type-casts)
   - [ScopeObject](#scopeobject)
@@ -255,6 +257,57 @@ flags: [true, false, true]
 
 ---
 
+### Objetos Aninhados e Indentação
+
+O Loom suporta objetos e propriedades aninhadas de forma flexível utilizando chaves `{}` ou blocos baseados em indentação (estilo YAML). Objetos aninhados podem ter profundidade arbitrária.
+
+#### 1. Sintaxe Inline (Chaves)
+Útil para configurações curtas ou definições em linha única:
+```loom
+@db {
+    pool: { min: 2, max: 10 }
+}
+```
+
+#### 2. Sintaxe Multi-linha (Chaves)
+Ideal para blocos maiores que requerem estrutura organizada por chaves:
+```loom
+@db {
+    pool: {
+        min: 2,
+        max: 10
+    }
+}
+```
+
+#### 3. Sintaxe Indentada (Estilo YAML)
+O Loom permite omitir as chaves e utilizar apenas quebras de linha seguidas por indentação maior para definir objetos aninhados.
+```loom
+@db {
+    pool:
+        min: 2
+        max: 10
+}
+```
+
+#### Regras de Indentação:
+- Um sub-bloco de indentação começa quando o valor de uma propriedade é omitido (apenas `:` seguido de quebra de linha) e a linha seguinte tem uma indentação maior.
+- O sub-bloco termina quando a indentação retorna ao mesmo nível ou a um nível inferior.
+- **Inconsistência**: Todos os campos do mesmo sub-bloco devem estar alinhados na mesma coluna. Indentação inconsistente levanta um erro `LoomSyntaxError`.
+- **Mistura de Tabs e Spaces**: Misturar caracteres de tabulação (`\t`) e espaços na indentação é estritamente proibido e levanta erro explícito.
+
+#### Acesso no Python:
+```python
+# Acesso direto a propriedades aninhadas através de atributos:
+min_val = env.db.pool.min.int   # 2
+max_val = env.db.pool.max.int   # 10
+
+# Acesso através de indexação flat
+min_val = env.pool.min.int      # 2 (se 'pool.min' for globalmente único)
+```
+
+---
+
 ### Comentários
 
 Comentários de linha única com `#`. Podem aparecer em linha própria ou inline após um valor.
@@ -362,6 +415,29 @@ Loom.register_provider(SystemEnvProvider(prefix="APP_"))
 ```
 
 Múltiplas chamadas a `load()` são cumulativas. A última definição do mesmo módulo+scope+chave vence (last-write-wins).
+
+---
+
+### Auto-Descoberta de Ficheiros (Auto-Discovery)
+
+Ao carregar ficheiros com `Loom.load()`, podes omitir o caminho completo do ficheiro ou até mesmo a extensão `.loom`. O Loom tentará descobrir e resolver o ficheiro automaticamente com base na seguinte ordem de prioridades:
+
+1. **Caminho informado explicitamente**: O caminho absoluto ou relativo exato passado (e.g. `Loom.load("app.loom")` ou `Loom.load("app")` no diretório local).
+2. **Diretório Atual**: Procura no diretório atual de execução (`cwd`).
+3. **Diretório `config/`**: Procura em `./config/` relativo ao diretório atual.
+4. **Raiz do Projeto**: Deteta a raiz do projeto (procurando por `.git`, `pyproject.toml` ou `setup.py`) e procura o ficheiro nela.
+5. **Diretórios Pais**: Sobe a árvore de diretórios a partir do diretório atual em busca do ficheiro.
+6. **Busca Recursiva**: Se nenhuma das opções anteriores encontrar o ficheiro, o Loom executará uma busca recursiva a partir da raiz do projeto.
+
+#### Resolução Determinística de Duplicados
+Caso existam múltiplos ficheiros com o mesmo nome na árvore de busca (e.g., `app.loom` e `subdir/app.loom`), a busca determinística escolherá:
+1. O ficheiro localizado no diretório mais raso (menor profundidade de diretório).
+2. Desempate por ordem alfabética do caminho absoluto.
+
+```python
+# Procura por "config/app.loom", "./app.loom", etc.
+Loom.load("app")
+```
 
 ---
 

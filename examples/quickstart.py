@@ -2,7 +2,7 @@
 Nestifypy Quickstart Example
 """
 
-from nestifypy.core import Logger, Constants
+from nestifypy.slogger import Logger, Constants
 from nestifypy.decorators import benchmark, cache, retry, event, emit
 from nestifypy.types import Vector2, Color, Rect
 from nestifypy.utils import Strings, Random, Math, Time, Validator
@@ -54,7 +54,7 @@ Console.rule()
 Console.success("All systems go")
 Console.table(
     [
-        {"module": "core",       "status": "stable",  "phase": 1},
+        {"module": "slogger",       "status": "stable",  "phase": 1},
         {"module": "yaml",       "status": "stable",  "phase": 1},
         {"module": "env",        "status": "stable",  "phase": 1},
         {"module": "console",    "status": "stable",  "phase": 1},

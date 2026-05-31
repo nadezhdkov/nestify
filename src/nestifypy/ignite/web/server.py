@@ -79,7 +79,7 @@ class WebServer:
 
         app.include_router(router)
 
-    def run(self):
+    async def run(self):
         if self._app is None:
             self.build()
 
@@ -96,7 +96,9 @@ class WebServer:
         port = props.get_int("server.port", 8080)
         reload = props.get_bool("server.reload", False)
 
-        uvicorn.run(self._app, host=host, port=port, reload=reload)
+        config = uvicorn.Config(self._app, host=host, port=port, reload=reload)
+        server = uvicorn.Server(config)
+        await server.serve()
 
     @property
     def app(self):

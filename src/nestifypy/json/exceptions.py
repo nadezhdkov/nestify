@@ -3,7 +3,7 @@ nestifypy.json.exceptions
 -------------------------
 Custom exceptions for the JSON module.
 """
-from nestifypy.core import ConfigError
+from nestifypy.slogger import ConfigError
 
 
 class JsonError(ConfigError):

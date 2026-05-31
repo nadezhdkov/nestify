@@ -68,6 +68,10 @@ class FileProvider(Provider):
     Imports (@import directives) are resolved recursively, with cycle detection.
     """
 
+    # Class-level cache for discovered files
+    # Key: (base_dir, pattern) -> resolved absolute path
+    _discovery_cache: dict[tuple[str, str], str] = {}
+
     def __init__(
         self,
         paths: "str | list[str]",
@@ -104,12 +108,109 @@ class FileProvider(Provider):
             full_pattern = os.path.join(self._base_dir, pattern) if not os.path.isabs(pattern) else pattern
             matched = sorted(glob.glob(full_pattern))
             if not matched and "*" not in pattern:
-                # Single exact file — will raise on load if missing
-                matched = [full_pattern]
+                # Attempt auto-discovery
+                discovered = self._discover_file(pattern)
+                if discovered:
+                    matched = [discovered]
+                else:
+                    # Single exact file — will raise on load if missing
+                    matched = [full_pattern]
             resolved.extend(matched)
 
         # Apply profile priority: local > profile > base
         return self._apply_profile_priority(resolved)
+
+    def _discover_file(self, pattern: str) -> Optional[str]:
+        cache_key = (self._base_dir, pattern)
+        if cache_key in self._discovery_cache:
+            return self._discovery_cache[cache_key]
+
+        # 1. Caminho informado explicitamente
+        explicit_path = pattern if os.path.isabs(pattern) else os.path.join(self._base_dir, pattern)
+        explicit_path = os.path.abspath(explicit_path)
+
+        if os.path.isfile(explicit_path):
+            self._discovery_cache[cache_key] = explicit_path
+            return explicit_path
+        if not explicit_path.endswith(".loom"):
+            explicit_loom = explicit_path + ".loom"
+            if os.path.isfile(explicit_loom):
+                self._discovery_cache[cache_key] = explicit_loom
+                return explicit_loom
+
+        # 2. Get target filenames to search for
+        filename = os.path.basename(pattern)
+        filenames = [filename]
+        if not filename.endswith(".loom"):
+            filenames.append(filename + ".loom")
+
+        # Let's collect unique directories to search in order
+        search_dirs = []
+
+        # Current directory
+        search_dirs.append(os.path.abspath(self._base_dir))
+
+        # config/ directory
+        search_dirs.append(os.path.abspath(os.path.join(self._base_dir, "config")))
+
+        # Project root detection
+        proj_root = self._find_project_root(self._base_dir)
+        if proj_root:
+            proj_root = os.path.abspath(proj_root)
+            if proj_root not in search_dirs:
+                search_dirs.append(proj_root)
+
+        # Parent directories
+        curr = os.path.abspath(self._base_dir)
+        while True:
+            parent = os.path.dirname(curr)
+            if parent == curr:
+                break
+            parent = os.path.abspath(parent)
+            if parent not in search_dirs:
+                search_dirs.append(parent)
+            curr = parent
+
+        # Check each directory in order for our filenames
+        for s_dir in search_dirs:
+            if not os.path.isdir(s_dir):
+                continue
+            for fname in filenames:
+                full_path = os.path.join(s_dir, fname)
+                if os.path.isfile(full_path):
+                    abs_path = os.path.abspath(full_path)
+                    self._discovery_cache[cache_key] = abs_path
+                    return abs_path
+
+        # If still not found, perform recursive search
+        start_search_dir = proj_root if proj_root else os.path.abspath(self._base_dir)
+        matches = []
+        for root, dirs, files in os.walk(start_search_dir):
+            for fname in filenames:
+                if fname in files:
+                    full_path = os.path.join(root, fname)
+                    matches.append(os.path.abspath(full_path))
+
+        if matches:
+            # Deterministic resolution: sort by path depth first (shallower first), then alphabetically
+            matches.sort(key=lambda p: (p.count(os.sep), p))
+            resolved = matches[0]
+            self._discovery_cache[cache_key] = resolved
+            return resolved
+
+        return None
+
+    def _find_project_root(self, start_dir: str) -> Optional[str]:
+        curr = os.path.abspath(start_dir)
+        while True:
+            # Look for markers
+            if any(os.path.exists(os.path.join(curr, m)) for m in (".git", "pyproject.toml", "setup.py")):
+                return curr
+            parent = os.path.dirname(curr)
+            if parent == curr:
+                break
+            curr = parent
+        return None
 
     def _apply_profile_priority(self, files: list[str]) -> list[str]:
         """

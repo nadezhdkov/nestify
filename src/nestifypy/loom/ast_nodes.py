@@ -56,14 +56,38 @@ class ListNode:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Map node (nested object)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class MapNode:
+    """
+    A nested object value: key: { sub_key: value, ... }
+
+    First-class AST value type — treated identically to LiteralNode
+    and ListNode as a valid property value. Supports arbitrary nesting.
+
+    Produced by three syntaxes:
+        Inline:      pool: { min: 2, max: 10 }
+        Multi-line:  pool: {\n  min: 2\n  max: 10\n}
+        Indented:    pool:\n    min: 2\n    max: 10
+    """
+    properties: list["PropertyNode"] = field(default_factory=list)
+    loc: Optional[SourceLocation] = None
+
+    def __repr__(self) -> str:
+        return f"MapNode(props={len(self.properties)})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Property node
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class PropertyNode:
-    """A key: value pair inside a scope."""
+    """A key: value pair inside a scope or nested map."""
     key: str
-    value: Union[LiteralNode, ListNode]
+    value: Union[LiteralNode, ListNode, "MapNode"]
     loc: Optional[SourceLocation] = None
 
     def __repr__(self) -> str:
@@ -138,6 +162,7 @@ __all__ = [
     "SourceLocation",
     "LiteralNode",
     "ListNode",
+    "MapNode",
     "PropertyNode",
     "ScopeNode",
     "ImportNode",

@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Callable, Dict, List, Any, Optional
 from pathlib import Path
-from nestifypy.core import Logger
+from nestifypy.slogger import Logger
 
 class YamlWatcher:
     """Manages file watching and debounced hot reloading for YAML configurations."""
@@ -101,7 +101,7 @@ class YamlWatcher:
                 self._debounce_thread = threading.Thread(target=self._debounce_worker, daemon=True)
                 self._debounce_thread.start()
                 
-                Logger.info("[yaml.watch] Hot reload enabled")
+                # Logger.info("[yaml.watch] Hot reload enabled")
 
             except ImportError:
                 Logger.warn(

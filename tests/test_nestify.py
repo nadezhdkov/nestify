@@ -1,7 +1,7 @@
 """
 tests/test_nestifypy.py
 --------------------
-Basic test suite for Nestifypy core modules.
+Basic test suite for Nestifypy slogger modules.
 Run with: pytest
 """
 
@@ -13,12 +13,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
 # ─────────────────────────────────────────────
-#  core
+#  slogger
 # ─────────────────────────────────────────────
 
 class TestLogger:
     def test_log_levels_do_not_crash(self) -> None:
-        from nestifypy.core import Logger
+        from nestifypy.slogger import Logger
         Logger.info("test")
         Logger.warn("test")
         Logger.error("test")
@@ -28,26 +28,26 @@ class TestLogger:
 
 class TestRegistry:
     def test_register_and_get(self) -> None:
-        from nestifypy.core import Registry
+        from nestifypy.slogger import Registry
         Registry.register("test_cat", "my_item", 42)
         assert Registry.get("test_cat", "my_item") == 42
 
     def test_duplicate_raises(self) -> None:
-        from nestifypy.core import Registry, RegistryError
+        from nestifypy.slogger import Registry, RegistryError
         Registry.clear("dup_test")
         Registry.register("dup_test", "x", 1)
         with pytest.raises(RegistryError):
             Registry.register("dup_test", "x", 2)
 
     def test_missing_raises(self) -> None:
-        from nestifypy.core import Registry, RegistryError
+        from nestifypy.slogger import Registry, RegistryError
         with pytest.raises(RegistryError):
             Registry.get("nonexistent", "key")
 
 
 class TestPlugin:
     def test_register_decorator(self) -> None:
-        from nestifypy.core import Plugin
+        from nestifypy.slogger import Plugin
 
         @Plugin.register
         class MyPlugin:
@@ -56,7 +56,7 @@ class TestPlugin:
         assert "MyPlugin" in Plugin.all()
 
     def test_info_decorator(self) -> None:
-        from nestifypy.core import Plugin
+        from nestifypy.slogger import Plugin
 
         @Plugin.info(name="TestPlugin", version="2.0")
         @Plugin.register

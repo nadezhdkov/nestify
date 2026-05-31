@@ -104,33 +104,50 @@ class SceneManager:
 
     # ── Stack operations ─────────────────────
 
-    def push(self, name: str) -> None:
-        """Push a new scene on the stack (pauses the current scene)."""
+    def push(self, name: str, data: Any = None) -> None:
+        """Push a new scene on the stack (pauses the current scene).
+
+        Args:
+            name: Registered scene name.
+            data: Optional payload forwarded to the scene's @Scene.load hook
+                  as the first argument.  The hook signature becomes:
+                  ``def on_load(self, data=None): ...``
+        """
         if name not in self._scenes:
             raise SceneError(f"Scene '{name}' not registered.")
         if self._stack:
             self._dispatch(self._get_instance(self._stack[-1]), "pause")
         self._stack.append(name)
-        self._dispatch(self._get_instance(name), "load")
+        self._dispatch(self._get_instance(name), "load", data)
 
-    def pop(self) -> None:
-        """Remove the top scene and resume the one beneath it."""
+    def pop(self, data: Any = None) -> None:
+        """Remove the top scene and resume the one beneath it.
+
+        Args:
+            data: Optional payload forwarded to the underlying scene's
+                  @Scene.resume hook.
+        """
         if not self._stack:
             return
         current = self._stack.pop()
         self._dispatch(self._instances.get(current), "unload")
         if self._stack:
-            self._dispatch(self._get_instance(self._stack[-1]), "resume")
+            self._dispatch(self._get_instance(self._stack[-1]), "resume", data)
 
-    def switch(self, name: str) -> None:
-        """Replace the current top-of-stack scene with a new one."""
+    def switch(self, name: str, data: Any = None) -> None:
+        """Replace the current top-of-stack scene with a new one.
+
+        Args:
+            name: Registered scene name.
+            data: Optional payload forwarded to the new scene's @Scene.load hook.
+        """
         if not self._stack:
-            self.push(name)
+            self.push(name, data)
             return
         current = self._stack.pop()
         self._dispatch(self._instances.get(current), "unload")
         self._stack.append(name)
-        self._dispatch(self._get_instance(name), "load")
+        self._dispatch(self._get_instance(name), "load", data)
 
     def pop_all(self) -> None:
         """Clear the entire scene stack."""
@@ -188,7 +205,15 @@ class SceneManager:
             try:
                 attr = getattr(instance, attr_name)
                 if getattr(attr, "_pyunix_scene", None) == hook_name:
-                    attr(*args)
+                    # Pass args only if the hook can accept them
+                    # (load receives data, resume receives data, others get nothing)
+                    if args and args[0] is not None:
+                        try:
+                            attr(*args)
+                        except TypeError:
+                            attr()   # hook doesn't accept data — call without it
+                    else:
+                        attr()
             except AttributeError:
                 pass
 
@@ -240,14 +265,14 @@ class _SceneAPI:
         return self._manager.resume_hook
 
     # Stack operations
-    def push(self, name: str) -> None:
-        self._manager.push(name)
+    def push(self, name: str, data: Any = None) -> None:
+        self._manager.push(name, data)
 
-    def pop(self) -> None:
-        self._manager.pop()
+    def pop(self, data: Any = None) -> None:
+        self._manager.pop(data)
 
-    def switch(self, name: str) -> None:
-        self._manager.switch(name)
+    def switch(self, name: str, data: Any = None) -> None:
+        self._manager.switch(name, data)
 
     def pop_all(self) -> None:
         self._manager.pop_all()

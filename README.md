@@ -54,10 +54,13 @@ Nestifypy is composed of several independent, high-performance packages. Use wha
 | [**Env**](#-env--environment-management) | Typed, chainable `.env` variable management |
 | [**Loom**](#-loom--configuration-engine) | Hierarchical typed config format (`.loom` files) |
 | [**Flow**](#-flow--control-flow) | Task scheduling, throttling, concurrency helpers |
+| [**Promise**](#-promise) | Asynchronous execution API without asyncio |
+| [**Trying**](#-trying) | Functional error handling with Try monad |
+| [**Input**](#-input) | Interactive CLI inputs, forms, and validation |
 | [**Decorators**](#-decorators) | Caching, retries, validation, events and more |
 | [**Collections**](#-collections) | Java-inspired strongly-typed data structures |
 | [**Console**](#-console--terminal-utilities) | Rich terminal output, spinners, tables, prompts |
-| [**Core**](#-core--logger-registry-plugins) | Logger, Registry, Plugin system |
+| [**SLogger**](#-core--logger-registry-plugins) | Logger (Slogger), Registry, Plugin system |
 
 ---
 
@@ -806,7 +809,7 @@ Console.table([
 Application backbone: standardized logger, global registry, dynamic plugin system.
 
 ```python
-from nestifypy.core import Logger, LogLevel, Registry, Plugin
+from nestifypy.slogger import Logger, LogLevel, Registry, Plugin
 
 # Logger
 Logger.set_level(LogLevel.DEBUG)
@@ -821,11 +824,13 @@ Logger.trace()  # print full stacktrace
 Registry.register("services", "database", db_instance)
 db = Registry.get("services", "database")
 
+
 # Plugin system
 @Plugin.info(name="auth_plugin", version="1.0.0", description="OAuth support")
 class AuthPlugin:
     def authenticate(self):
         pass
+
 
 Plugin.register(AuthPlugin)
 Plugin.load("plugins/custom_auth.py")
@@ -847,6 +852,13 @@ Generated structure includes pre-configured support for `ruff`, `pytest`, and `m
 ---
 
 ## 📝 Changelog
+
+### v0.2.3
+- **Trying:** Added `Try` monad for fluent, functional error handling without `try/except`.
+- **Promise:** Implemented modern Promise API for async execution (`then`, `catch`, `all`, `race`) without asyncio.
+- **Input:** Added comprehensive module for interactive CLI inputs, form handling, and data sanitization.
+- **Slogger:** Upgraded core logger module to `slogger`.
+- **Scheduler:** Added robust `@Scheduled` cron job decorator for the Ignite framework.
 
 ### v0.2.2
 - **Pyunix:** Fixed physics bounding box discrepancies (`rect.topleft` vs `rect.center`) ensuring pixel-perfect `BoxCollider` interactions.

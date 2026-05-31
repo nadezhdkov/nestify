@@ -202,7 +202,7 @@ class ScopeObject(metaclass=ABCMeta):
     # ── attribute access ──────────────────────────────────────────────────────
 
     def __getattr__(self, name: str) -> Any:
-        """Access a property by name: scope.host → LoomValue."""
+        """Access a property by name: scope.host → LoomValue, scope.pool → ScopeObject."""
         props = object.__getattribute__(self, "_props")
         path = object.__getattribute__(self, "_path")
         module = object.__getattribute__(self, "_module")
@@ -211,6 +211,15 @@ class ScopeObject(metaclass=ABCMeta):
             val = props[name]
             if isinstance(val, ScopeObject):
                 return val
+            # Auto-wrap nested dicts as ScopeObject for attribute access
+            if isinstance(val, dict):
+                sub_scope = ScopeObject(
+                    path=f"{path}.{name}",
+                    module=module,
+                    properties=val,
+                    parent=self,
+                )
+                return sub_scope
             return LoomValue(val, f"{path}.{name}", module)
 
         from nestifypy.loom.exceptions import LoomResolutionError

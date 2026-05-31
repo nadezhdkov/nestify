@@ -219,7 +219,7 @@ cython_debug/
 """
 
 _DEFAULT_MAIN = """\
-from nestifypy.core import Logger
+from nestifypy.slogger import Logger
 from nestifypy.env import Env
 
 def main() -> None:

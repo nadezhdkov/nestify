@@ -24,10 +24,20 @@ class EventBus:
         self._deferred:  Deque[Tuple[str, Any]]    = deque()
 
     def on(self, event_name: str) -> Callable:
-        """Decorator: register a listener for `event_name`."""
+        """
+        Decorator: register a listener for `event_name`.
+
+        Works with both plain functions and bound methods:
+
+            # Plain function (decorator style)
+            @Event.on("player_death")
+            def handle(data): ...
+
+            # Bound method (imperative style — use in __init__)
+            Event.on("player_death")(self._on_death)
+        """
         def decorator(func: Callable) -> Callable:
             self._listeners.setdefault(event_name, []).append(func)
-            func._pyunix_event = event_name
             return func
         return decorator
 
